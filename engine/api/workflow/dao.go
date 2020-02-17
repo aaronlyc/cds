@@ -70,7 +70,6 @@ type LoadOptions struct {
 	Minimal               bool
 	DeepPipeline          bool
 	Base64Keys            bool
-	WithFavorites         bool
 	WithLabels            bool
 	WithIcon              bool
 	WithAsCodeUpdateEvent bool
@@ -438,6 +437,41 @@ func LoadByApplicationName(ctx context.Context, db gorp.SqlExecutor, projectKey 
 	res := make(sdk.Workflows, len(dbRes))
 	for i, w := range dbRes {
 		w.ProjectKey = projectKey
+		res[i] = sdk.Workflow(w)
+	}
+
+	return res, nil
+}
+
+// LoadFavorites returns all favorites workflows for one user
+func LoadFavorites(ctx context.Context, db gorp.SqlExecutor, store cache.Store, u *sdk.AuthentifiedUser) ([]sdk.Workflow, error) {
+	var end func()
+	_, end = observability.Span(ctx, "workflow.LoadFavorites")
+	defer end()
+
+	dbRes := []Workflow{}
+
+	query := `SELECT workflow.*
+			FROM workflow
+			JOIN workflow_favorite ON workflow.id = workflow_id
+			join project on project.id = workflow.project_id
+			WHERE authentified_user_id = $1`
+
+	if _, err := db.Select(&dbRes, query, u.ID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, sdk.WrapError(err, "Unable to load favorites workflows")
+	}
+
+	res := make([]sdk.Workflow, len(dbRes))
+	for i, w := range dbRes {
+		var err error
+		w.Favorite = true
+		w.ProjectKey, err = db.SelectStr("SELECT projectkey FROM project WHERE id = $1", w.ProjectID)
+		if err != nil {
+			return nil, sdk.WrapError(err, "cannot load project key for workflow %s and project_id %d", w.Name, w.ProjectID)
+		}
 		res[i] = sdk.Workflow(w)
 	}
 
